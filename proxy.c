@@ -7,6 +7,7 @@
 
 void doit(int fd);
 void parse_uri(char *url, char *hostname, char *port, char *filename);
+void *thread(void *vargp);
 
 // /* You won't lose style points for including this long line in your code */
 // static const char *user_agent_hdr =
@@ -14,9 +15,10 @@ void parse_uri(char *url, char *hostname, char *port, char *filename);
 //     "Firefox/10.0.3\r\n";
 
 int main(int argc, char **argv) {
-  int listenfd, connfd;
+  int listenfd, *connfdp;
   char hostname[MAXLINE], port[MAXLINE];
   socklen_t clientlen;
+  pthread_t tid;
   struct sockaddr_storage clientaddr;
 
   /* Check command line args */
@@ -25,34 +27,18 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  listenfd = Open_listenfd(argv[1]);      
+  listenfd = Open_listenfd(argv[1]);      // 듣기 식별자 생성
   while (1) {                             
-    clientlen = sizeof(clientaddr);       
-    connfd = Accept(listenfd, (SA *)&clientaddr,      
-                    &clientlen);  // line:netp:tiny:accept
+    clientlen = sizeof(clientaddr);
+    connfdp = Malloc(sizeof(int));       
+    *connfdp = Accept(listenfd, (SA *)&clientaddr,      
+                    &clientlen);
+    Pthread_create(&tid, NULL, thread, connfdp);   // &tid: 쓰레드 객체   thread: 쓰레드가 하게될 작업   connfdp: thread에 들어갈 인자
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 
                 0);
     printf("Accepted connection from (%s, %s)\n", hostname, port);
-    doit(connfd);   // line:netp:tiny:doit
-    Close(connfd);  // line:netp:tiny:close
   }
   return 0;
-}
-
-void read_requesthdrs(rio_t *rp)
-{
-  char buf[MAXLINE];
-
-  Rio_readlineb(rp, buf, MAXLINE); // rp에서 텍스트를 읽고 buf로 복사
-  printf("%s", buf);
-
-  while (strcmp(buf, "\r\n"))
-  {
-    Rio_readlineb(rp, buf, MAXLINE);
-    printf("%s", buf);
-  }
-
-  return;
 }
 
 void doit(int fd)
@@ -60,7 +46,6 @@ void doit(int fd)
   int server_fd;
   char buf[MAXLINE], sbuf[MAX_OBJECT_SIZE], method[MAXLINE], url[MAXLINE], version[MAXLINE];
   char hostname[MAXLINE], port[MAXLINE], filename[MAXLINE];                           
-  char* oldurl;
   rio_t rio , servrio;
 
   //클라이언트로부터 요청을 받는부분
@@ -70,13 +55,11 @@ void doit(int fd)
   printf("Request headers:\n");
   printf("%s", buf);                                    
   sscanf(buf, "%s %s %s", method, url, version);
-  // oldurl = url;
   parse_uri(url, hostname, port, filename);
   printf("%s %s \n", hostname, port);
 
 // proxy와 tiny 연결해서 요청 보내기
   server_fd = Open_clientfd(hostname, port);
-  read_requesthdrs(&rio);
   Rio_readinitb(&servrio, server_fd);
 
   //sprintf(buf, "%s", oldurl);
@@ -129,4 +112,14 @@ void parse_uri(char *url, char *hostname, char *port, char *filename)
     *p ='/';
     strcpy(filename, p);
   }
+}
+
+void *thread(void *vargp)
+{
+  int connfd = *((int *)vargp);
+  Pthread_detach(pthread_self());
+  Free(vargp);
+  doit(connfd);
+  Close(connfd);
+  return NULL;
 }
